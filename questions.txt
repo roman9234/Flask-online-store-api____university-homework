@@ -1,0 +1,1 @@
+где создавать виртуальное окружение? (в папке online_store или в aothorisation_app)
