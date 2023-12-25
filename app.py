@@ -94,25 +94,26 @@ def sign_in():
     password = data['password']
 
     query = "SELECT * FROM public.users WHERE user_name = '{}'  AND user_password = '{}'".format(username, password)
+    
+    try:
+        cur = conn.cursor()
+        cur.execute(query)
+        rows = cur.fetchall()
+        # return jsonify({'token': rows})
+        uuid = rows[0][0]
+        cur.close()
 
-    cur = conn.cursor()
-    cur.execute(query)
-    rows = cur.fetchall()
-    if rows.__len__ == 0:
+        session['logged_in'] = True
+        token = jwt.encode({
+                                'uuid': uuid,
+                                'username': username, 
+                                'expiration': str(datetime.utcnow() + timedelta(seconds=120))
+                            }, 
+                                app.config['SECRET_KEY'], 
+                                algorithm='HS256')
+        return jsonify({'token': token})
+    except:
         return jsonify({'status':'failed to login'})
-    uuid = rows[0][0]
-    cur.close()
-
-    session['logged_in'] = True
-    token = jwt.encode({
-                            'uuid': uuid,
-                            'username': username, 
-                            'expiration': str(datetime.utcnow() + timedelta(seconds=120))
-                        }, 
-                            app.config['SECRET_KEY'], 
-                            algorithm='HS256')
-    return jsonify({'token': token})
-    # return jsonify({'status':'work in progress'})
 
 
 # создать аккаунт и сразу войти в него
