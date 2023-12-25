@@ -1,6 +1,6 @@
 import uuid
 from flask import Flask, jsonify, request, session
-from config import host_c,user_c,password_c,db_name_c,port_c
+from utilities.config import host_c,user_c,password_c,db_name_c,port_c
 import psycopg2
 
 import jwt
@@ -9,6 +9,8 @@ from functools import wraps
 
 from model.product import Product
 from model.user import User
+from utilities.config import host_c,user_c,password_c,db_name_c,port_c
+from utilities.decorators import token_required
 
 # CREATE - создание сущности на сервере - POST (параметры в теле запроса)
 # RETRIEVE - чтение сущности с сервера - GET (параметры в URL ""….?id=123"")
@@ -32,35 +34,24 @@ conn = psycopg2.connect(
     password=password_c,
     port=port_c
 )
+# - вместо psycopg2 истользовать SQL алхимию (более удобная работа с данными) 
+# + pycache убрать 
+# + добавить gitignore 
+# добавить readme (описание части проекта + как запустить)
+# + декаратор для токенов и approad убрать в отдельные файлы (например routers)
+# + убрать pycache
+# добавить документацию (+5 баллов) = word файл. Что писать есть в требованиях. Ссылку в readme
+# 
+# доки + бэк = зачёт
 
 
-def token_required(func):#декоратор - если для выполнения действия нужен токен.
-    @wraps(func)
-    def decorated(*args, **kwargs):
-        # получаем токен из сессии
-        try:
-            if request.method == 'POST' or request.method == 'PUT':
-                data = request.get_json()
-                token = data['token']
-            if request.method == 'GET' or request.method == 'DELETE':
-                token = request.args.get('token')
-        except:
-            return jsonify({'status': 'unknown error'})
-        if not token:
-            return jsonify({'status': 'token is missing'})
-        
-        # проверяем токен
-        try:
-            #добавляем payload в аргументы функции
-            payload = jwt.decode(token, app.config['SECRET_KEY'], algorithms=['HS256'])
-            kwargs['payload'] = payload
-        except jwt.exceptions.InvalidTokenError:
-            return jsonify({'status': 'invalid token'})
-        except:
-            return jsonify({'status': 'unknown error'})
-        return func(*args, **kwargs)
-    
-    return decorated
+
+# 7 посещения
+# 2 галочки
+# 6 баллов за код
+# 
+# ещё 10 надо
+# 
 
 # пути:
 
@@ -91,12 +82,11 @@ def token_required(func):#декоратор - если для выполнен�
 #     else:
 #         return 'logged in currently'
 
-
-
 # войти в аккаунт
+
+
 @app.route('/sign_in', methods=['POST'])
 def sign_in():
-
 # {"username": "user_1", "password": "qwerty123"}
 
     data = request.get_json()
@@ -128,12 +118,40 @@ def sign_in():
 # создать аккаунт и сразу войти в него
 @app.route('/sign_up', methods=['POST'])
 def sign_up():
-    return jsonify({'status':'work in progress'})
+
+    data = request.get_json()
+    user_uuid = data['user_uuid']
+    user_name = data['user_name']
+    password = data['password']
+
+    query = "SELECT COUNT(*) FROM public.users WHERE user_name = '{}'".format(user_name)
+    cur = conn.cursor()
+    cur.execute(query)
+    rows = cur.fetchall()
+    cur.close()
+    if (rows[0][0] == 1):
+        return jsonify({'status':'username occupied'})
+
+    query = "INSERT INTO public.users VALUES ('{}', '{}', '{}')".format(user_uuid, user_name, password)
+    cur = conn.cursor()
+    cur.execute(query)
+    cur.close()
+
+    session['logged_in'] = True
+    token = jwt.encode({
+                            'uuid': user_uuid,
+                            'username': user_name, 
+                            'expiration': str(datetime.utcnow() + timedelta(seconds=120))
+                        }, 
+                            app.config['SECRET_KEY'], 
+                            algorithm='HS256')
+    return jsonify({'token': token})
 
 
-# создать аккаунт и сразу войти в него
+
+# проверить токен
 @app.route('/check_token', methods=['POST'])
-@token_required
+@token_required(request, app)
 def check_token(payload):
     return jsonify({'status':'success','payload': payload})
 
@@ -142,8 +160,8 @@ def check_token(payload):
 
 
 # добавление одного товара
-@app.route('/products/add', methods=['POST'])
-@token_required
+@app.route('/products', methods=['POST'])
+@token_required(request, app)
 def products_add(payload):
     page_json = request.get_json()
     uuid = page_json['uuid']
@@ -158,23 +176,32 @@ def products_add(payload):
     return jsonify({'status':'success'})
 
 
-# добавление нескольких товаров
-@app.route('/products/add_many', methods=['POST'])
-def products_add_many():
-    return jsonify({'status':'work in progress'})
-
-
 # изменение товара
-@app.route('/products/edit', methods=['PUT'])
-def products_edit():
-    return jsonify({'status':'work in progress'})
+@app.route('/products', methods=['PUT'])
+@token_required(request, app)
+def products_edit(payload):
+    data = request.get_json()
+    product_uuid = data['uuid']
+    new_description = data['text']
+    query = "UPDATE public.products SET product_description = '{}' WHERE products.product_uuid = '{}'".format(new_description, product_uuid)
+    cur = conn.cursor()
+    cur.execute(query)
+    return jsonify({'status':'success'})
 
 
-# удаление товара
-@app.route('/products/delete', methods=['DELETE'])
-@token_required
+# удаление товара (проверить пользователя)
+@app.route('/products', methods=['DELETE'])
+@token_required(request, app)
 def products_delete(payload):
     uuid = request.args.get('uuid')
+    query = "SELECT COUNT(*) FROM public.products WHERE product_uuid = '{}'".format(uuid)
+    cur = conn.cursor()
+    cur.execute(query)
+    rows = cur.fetchall()
+    cur.close()
+    if (rows[0][0] == 0):
+        return jsonify({'status':'no such page'})
+
     query = "DELETE FROM public.products WHERE product_uuid = '{}'".format(uuid)
     cur = conn.cursor()
     cur.execute(query)
@@ -183,7 +210,7 @@ def products_delete(payload):
 
 
 # получение одного товара
-@app.route('/products/get', methods=['GET'])
+@app.route('/products', methods=['GET'])
 def products_get():
 
     uuid = request.args.get('uuid')
@@ -204,9 +231,9 @@ def products_get():
     return jsonify(data)
 
 # получение нескольких страниц с товарами + фильтры
-@app.route('/products/get_many', methods=['GET']) #hellscheck путь - проверка на ответ
+@app.route('/products/all', methods=['GET']) #hellscheck путь - проверка на ответ
 def products_get_many():
-    query = "SELECT * FROM pus ORDER BY product_name ASC "
+    query = "SELECT * FROM public.products ORDER BY product_name ASC "
     cur = conn.cursor()
     cur.execute(query)
     rows = cur.fetchall()
@@ -220,9 +247,28 @@ def products_get_many():
         })
     return jsonify(data)
 
+# получение данных владельца объявления
+@app.route('/users/by_product', methods=['GET'])
+def users_by_products():
 
+    data = request.get_json()
+    product_uuid = data['product_uuid']
+    query = "SELECT u.user_name, u.user_uuid FROM public.products p \
+            LEFT JOIN public.users u ON p.user_uuid = u.user_uuid \
+            WHERE p.product_uuid = '{}'".format(product_uuid)
 
+    cur = conn.cursor()
+    cur.execute(query)
+    rows = cur.fetchall()
+    cur.close()
+    data = []
+    for row in rows:
+        data.append({
+            'user_name': row[0],
+            'user_uuid': row[1],
+        })
 
+    return jsonify(data)
 
 
 @app.route('/ping', methods=['GET']) #hellscheck путь - проверка на ответ
@@ -230,11 +276,8 @@ def ping():
     return jsonify({'response':'pong'})
 
 
-
-
-
-
 if __name__ == '__main__':
+
     app.run(debug=True)
 
 
